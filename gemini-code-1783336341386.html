@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>框制 Framing - MBTI 陣營策略遊戲</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+</head>
+<body class="bg-gray-100 m-0 p-0 overflow-hidden select-none">
+
+    <div id="root"></div>
+
+    <script>
+        const { useState, useEffect, useRef } = React;
+
+        // ==========================================
+        // 🧠 MBTI 認知功能引擎定義
+        // ==========================================
+        const getCognitiveFunctions = (mbti) => {
+            if (mbti === 'HUMAN') return [];
+            const [E_I, S_N, T_F, J_P] = mbti.split('');
+            const percDir = J_P === 'P' ? 'e' : 'i';
+            const judDir = J_P === 'J' ? 'e' : 'i';
+            
+            let f1, f2;
+            if (E_I === 'E') {
+                f1 = percDir === 'e' ? S_N + 'e' : T_F + 'e';
+                f2 = percDir === 'i' ? S_N + 'i' : T_F + 'i';
+            } else {
+                f1 = percDir === 'i' ? S_N + 'i' : T_F + 'i';
+                f2 = percDir === 'e' ? S_N + 'e' : T_F + 'e';
+            }
+            
+            const opposite = { 'Se':'Ni', 'Si':'Ne', 'Ne':'Si', 'Ni':'Se', 'Te':'Fi', 'Ti':'Fe', 'Fe':'Ti', 'Fi':'Te' };
+            return [f1, f2, opposite[f2], opposite[f1]];
+        };
+
+        const MBTI_INFO = {
+            HUMAN: { name: '人類玩家', icon: '👤', desc: '由玩家手動操作' },
+            INTJ: { name: '建築師', icon: '♟️' }, INTP: { name: '邏輯學家', icon: '🔬' },
+            ENTJ: { name: '指揮官', icon: '⚔️' }, ENTP: { name: '辯論家', icon: '🃏' },
+            INFJ: { name: '提倡者', icon: '🔮' }, INFP: { name: '調停者', icon: '🕊️' },
+            ENFJ: { name: '主人公', icon: '👑' }, ENFP: { name: '冒險家', icon: '🎉' },
+            ISTJ: { name: '物流師', icon: '📦' }, ISFJ: { name: '守衛者', icon: '🛡️' },
+            ESTJ: { name: '總經理', icon: '📊' }, ESFJ: { name: '執政官', icon: '🤝' },
+            ISTP: { name: '鑑賞家', icon: '🛠️' }, ISFP: { name: '探險家', icon: '🎨' },
+            ESTP: { name: '企業家', icon: '🚀' }, ESFP: { name: '表演者', icon: '🎭' }
+        };
+
+        const getInitialHand = () => [3, 3, 3, 3, 3, 3, 3, 3, 3];
+        const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+        function App() {
+            const [lobbyPhase, setLobbyPhase] = useState(true);
+            const [playerConfigs, setPlayerConfigs] = useState([
+                { id: 0, name: '紅方', colorClass: 'bg-red-500', textClass: 'text-red-500', borderClass: 'border-red-500', lightBg: 'bg-red-50', menuColor: 'rgba(239, 68, 68, 0.9)', type: 'HUMAN' },
+                { id: 1, name: '藍方', colorClass: 'bg-blue-500', textClass: 'text-blue-500', borderClass: 'border-blue-500', lightBg: 'bg-blue-50', menuColor: 'rgba(59, 130, 246, 0.9)', type: 'INTJ' },
+                { id: 2, name: '綠方', colorClass: 'bg-green-600', textClass: 'text-green-600', borderClass: 'border-green-600', lightBg: 'bg-green-50', menuColor: 'rgba(22, 163, 74, 0.9)', type: 'ENTP' },
+            ]);
+
+            const [board, setBoard] = useState(Array(81).fill(null)); 
+            const [playersState, setPlayersState] = useState([
+                { score: 0, hand: getInitialHand() }, { score: 0, hand: getInitialHand() }, { score: 0, hand: getInitialHand() }
+            ]);
+            const [currentTurn, setCurrentTurn] = useState(0);
+            const [gamePhase, setGamePhase] = useState('playing'); 
+            const [pendingFrames, setPendingFrames] = useState([]);
+            
+            const [activeCells, setActiveCells] = useState([]);
+            const [floatingText, setFloatingText] = useState(null);
+            const [toastMessage, setToastMessage] = useState(null);
+
+            const timerRef = useRef(null);
+            const [p1, setP1] = useState(null); 
+            const [p2, setP2] = useState(null);
+
+            const [hoveredCell, setHoveredCell] = useState(null);
+            const hoveredCellRef = useRef(null);
+            const p1Ref = useRef(null);
+
+            useEffect(() => { p1Ref.current = p1; }, [p1]);
+
+            useEffect(() => {
+                const handleKeyDown = (e) => {
+                    if (e.key === 'Control' && !p1Ref.current && hoveredCellRef.current !== null) {
+                        setP1({ id: 'ctrl', cellIndex: hoveredCellRef.current, isLongPress: true }); 
+                        setP2({ id: 'mouse', cellIndex: hoveredCellRef.current });
+                    }
+                };
+                const handleKeyUp = (e) => {
+                    if (e.key === 'Control') {
+                        if (p1Ref.current && p1Ref.current.id === 'ctrl') {
+                            setP1(null);
+                            setP2(null);
+                        }
+                    }
+                };
+                window.addEventListener('keydown', handleKeyDown);
+                window.addEventListener('keyup', handleKeyUp);
+                return () => {
+                    window.removeEventListener('keydown', handleKeyDown);
+                    window.removeEventListener('keyup', handleKeyUp);
+                };
+            }, []);
+
+            const showToast = (msg) => { setToastMessage(msg); setTimeout(() => setToastMessage(null), 2000); };
+            const isPerfectSquare = (num) => num > 0 && Math.sqrt(num) === Math.floor(Math.sqrt(num));
+
+            const startGame = () => {
+                setBoard(Array(81).fill(null));
+                setPlayersState([{ score: 0, hand: getInitialHand() }, { score: 0, hand: getInitialHand() }, { score: 0, hand: getInitialHand() }]);
+                setCurrentTurn(0); setGamePhase('playing'); setLobbyPhase(false);
+            };
+
+            const findValidFrames = (currentBoard, targetIndex) => {
+                const row = Math.floor(targetIndex / 9), col = targetIndex % 9;
+                let validFrames = [];
+                for (let size = 2; size <= 9; size++) {
+                    const minR = Math.max(0, row - size + 1), maxR = Math.min(9 - size, row);
+                    const minC = Math.max(0, col - size + 1), maxC = Math.min(9 - size, col);
+                    for (let r = minR; r <= maxR; r++) {
+                        for (let c = minC; c <= maxC; c++) {
+                            let sum = 0, isFull = true, colorCounts = { 0: 0, 1: 0, 2: 0 }, cellsInFrame = [];
+                            for (let i = 0; i < size; i++) {
+                                for (let j = 0; j < size; j++) {
+                                    const idx = (r + i) * 9 + (c + j);
+                                    const cell = currentBoard[idx];
+                                    if (!cell) { isFull = false; break; }
+                                    sum += cell.value; colorCounts[cell.player]++; cellsInFrame.push(idx);
+                                }
+                                if (!isFull) break;
+                            }
+                            if (isFull && isPerfectSquare(sum)) {
+                                let maxCards = -1, winners = [];
+                                for (let pid = 0; pid < 3; pid++) {
+                                    if (colorCounts[pid] > maxCards) { maxCards = colorCounts[pid]; winners = [pid]; } 
+                                    else if (colorCounts[pid] === maxCards) { winners.push(pid); }
+                                }
+                                validFrames.push({
+                                    id: `frame_${r}_${c}_${size}`, size, sum, colorCounts, cells: cellsInFrame,
+                                    centerRow: r + (size - 1) / 2, centerCol: c + (size - 1) / 2,
+                                    winners, pointsPerWinner: Math.floor(sum / winners.length), isSelected: true 
+                        });
+                            }
+                        }
+                    }
+                }
+                return validFrames;
+            };
+
+            const tryPlaceCard = (index, value, isAITriggered = false) => {
+                if (!isAITriggered && playerConfigs[currentTurn].type !== 'HUMAN') { showToast("現在是 AI 的回合！"); return; }
+                const currentPlayer = playersState[currentTurn];
+                if (currentPlayer.hand[value - 1] <= 0) { if (!isAITriggered) showToast(`數字 ${value} 已用完！`); return; }
+
+                const newPlayersState = [...playersState]; newPlayersState[currentTurn].hand[value - 1] -= 1;
+                const newBoard = [...board]; newBoard[index] = { player: currentTurn, value: value };
+                setBoard(newBoard); setPlayersState(newPlayersState);
+
+                const frames = findValidFrames(newBoard, index);
+                if (frames.length > 0) { setPendingFrames(frames); setGamePhase('confirming'); } 
+                else { nextTurn(newBoard); }
+            };
+
+            const evaluateFunction = (funcStr, tempBoard, idx, card, frames, currentPlayerHand) => {
+                const row = Math.floor(idx / 9), col = idx % 9;
+                let score = 0;
+
+                let adjOwn = 0, adjOpp = 0, adjEmpty = 0;
+                const dirs = [-9, 9, -1, 1];
+                dirs.forEach(d => {
+                    const nIdx = idx + d;
+                    if (nIdx >= 0 && nIdx < 81 && Math.abs(Math.floor(nIdx/9) - row) <= 1) { 
+                        if (tempBoard[nIdx] === null) adjEmpty++;
+                        else if (tempBoard[nIdx].player === currentTurn) adjOwn++;
+                        else adjOpp++;
+                    }
+                });
+
+                switch(funcStr) {
+                    case 'Se': 
+                        frames.forEach(f => { if (f.winners.includes(currentTurn)) score += f.pointsPerWinner * 2; });
+                        break;
+                    case 'Si': 
+                        score += adjOwn * 10;
+                        score += (card === 9 || card === 8) ? -15 : 5; 
+                        break;
+                    case 'Ne': 
+                        score += adjEmpty * 5;
+                        score += Math.random() * 30; 
+                        break;
+                    case 'Ni': 
+                        frames.forEach(f => {
+                            if (f.size >= 4) score += 50;
+                            if (f.size <= 2) score -= 10;
+                        });
+                        break;
+                    case 'Te': 
+                        frames.forEach(f => {
+                            const myPoint = f.winners.includes(currentTurn) ? f.pointsPerWinner : 0;
+                            const oppPoint = f.winners.some(w => w !== currentTurn) ? f.pointsPerWinner : 0;
+                            score += (myPoint - oppPoint) * 2;
+                        });
+                        break;
+                    case 'Ti': 
+                        score += (3 - currentPlayerHand[card - 1]) * 5;
+                        if (frames.length === 0) {
+                            const distToCenter = Math.abs(row - 4) + Math.abs(col - 4);
+                            score += (8 - distToCenter) * 3;
+                        }
+                        break;
+                    case 'Fe': 
+                        score += adjOpp * 12;
+                        frames.forEach(f => { if (f.winners.length > 1) score += 20; }); 
+                        break;
+                    case 'Fi': 
+                        if (card === 9 || card === 1) score += 15; 
+                        if ((row === 0 || row === 8) && (col === 0 || col === 8)) score += 20; 
+                        break;
+                }
+                return score;
+            };
+
+            const calculateAIMove = () => {
+                const aiType = playerConfigs[currentTurn].type;
+                const funcs = getCognitiveFunctions(aiType); 
+                const hand = playersState[currentTurn].hand;
+                const emptyIndices = board.map((c, i) => c === null ? i : null).filter(i => i !== null);
+                
+                let bestMove = null;
+                let highestScore = -Infinity;
+
+                if (emptyIndices.length === 0) return null;
+
+                for (let card = 1; card <= 9; card++) {
+                    if (hand[card - 1] === 0) continue;
+
+                    for (let idx of emptyIndices) {
+                        const tempBoard = [...board];
+                        tempBoard[idx] = { player: currentTurn, value: card };
+                        const frames = findValidFrames(tempBoard, idx);
+                        
+                        let moveScore = 0;
+                        moveScore += evaluateFunction(funcs[0], tempBoard, idx, card, frames, hand) * 4;
+                        moveScore += evaluateFunction(funcs[1], tempBoard, idx, card, frames, hand) * 2.5;
+                        moveScore += evaluateFunction(funcs[2], tempBoard, idx, card, frames, hand) * 1;
+                        moveScore += evaluateFunction(funcs[3], tempBoard, idx, card, frames, hand) * 0.2;
+
+                        if (moveScore > highestScore) {
+                            highestScore = moveScore;
+                            bestMove = { index: idx, card: card };
+                        }
+                    }
+                }
+                return bestMove;
+            };
+
+            useEffect(() => {
+                if (lobbyPhase || gamePhase === 'gameover' || playerConfigs[currentTurn].type === 'HUMAN') return;
+
+                if (gamePhase === 'playing') {
+                    const timer = setTimeout(() => {
+                        const aiMove = calculateAIMove();
+                        if (aiMove) {
+                            showToast(`${MBTI_INFO[playerConfigs[currentTurn].type]?.icon || ''} ${playerConfigs[currentTurn].name} (${playerConfigs[currentTurn].type}) 出牌！`);
+                            tryPlaceCard(aiMove.index, aiMove.card, true);
+                        }
+                    }, 800);
+                    return () => clearTimeout(timer);
+                }
+                
+                if (gamePhase === 'confirming') {
+                    const aiType = playerConfigs[currentTurn].type;
+                    const funcs = getCognitiveFunctions(aiType);
+                    const domFunc = funcs[0]; 
+
+                    const timer = setTimeout(() => {
+                        let newFrames = [...pendingFrames].map(f => {
+                            const amIWinner = f.winners.includes(currentTurn);
+                            const oppWin = f.winners.some(w => w !== currentTurn);
+                            let shouldSelect = true;
+
+                            if (['Te', 'Ti', 'Ni', 'Si'].includes(domFunc)) {
+                                shouldSelect = amIWinner && (!oppWin || f.pointsPerWinner > 10); 
+                            } else if (['Fe', 'Fi'].includes(domFunc)) {
+                                shouldSelect = amIWinner; 
+                            } else if (['Ne', 'Se'].includes(domFunc)) {
+                                shouldSelect = true; 
+                            }
+                            return { ...f, isSelected: shouldSelect };
+                        });
+                        
+                        setPendingFrames(newFrames);
+                        setTimeout(() => {
+                            if (newFrames.filter(f => f.isSelected).length > 0) processFrames(newFrames);
+                            else skipFrames();
+                        }, 800);
+                    }, 600);
+                    return () => clearTimeout(timer);
+                }
+            }, [currentTurn, gamePhase, lobbyPhase]);
+
+            const handlePointerDown = (e, index) => {
+                if (gamePhase !== 'playing' || playerConfigs[currentTurn].type !== 'HUMAN') return;
+                if (e.target.setPointerCapture) e.target.setPointerCapture(e.pointerId);
+                if (!p1) {
+                    setP1({ id: e.pointerId, cellIndex: index, startX: e.clientX, startY: e.clientY, curX: e.clientX, curY: e.clientY, isLongPress: false, activeValue: null, isEmpty: board[index] === null });
+                    timerRef.current = setTimeout(() => { setP1(prev => prev ? { ...prev, isLongPress: true } : null); if (navigator.vibrate) navigator.vibrate(50); }, 300);
+                } else if (p1 && !p2 && e.pointerId !== p1.id) {
+                    if (p1.isLongPress) setP2({ id: e.pointerId, cellIndex: index });
+                }
+            };
+
+            const handlePointerMove = (e) => {
+                if (p1 && e.pointerId === p1.id) {
+                    const dist = Math.hypot(e.clientX - p1.startX, e.clientY - p1.startY);
+                    if (!p1.isLongPress) { if (dist > 15) { clearTimeout(timerRef.current); setP1(null); } return; }
+                    let activeValue = null;
+                    if (dist > 25 && p1.isEmpty && !p2) { 
+                        let angle = Math.atan2(e.clientY - p1.startY, e.clientX - p1.startX) * 180 / Math.PI;
+                        if (angle < 0) angle += 360;
+                        activeValue = [3, 4, 5, 6, 7, 8, 1, 2][Math.round(angle / 45) % 8];
+                    }
+                    setP1(prev => prev ? { ...prev, curX: e.clientX, curY: e.clientY, activeValue } : null);
+                } else if (p2 && e.pointerId === p2.id) {
+                    const element = document.elementFromPoint(e.clientX, e.clientY);
+                    if (element && element.dataset.index !== undefined) setP2(prev => prev ? { ...prev, cellIndex: parseInt(element.dataset.index, 10) } : null);
+                }
+            };
+
+            const handlePointerUp = (e) => {
+                if (p2 && e.pointerId === p2.id) { setP2(null); return; }
+                if (p1 && e.pointerId === p1.id) {
+                    clearTimeout(timerRef.current);
+                    if (p2) { setP1(null); setP2(null); return; }
+                    if (!p1.isLongPress && p1.isEmpty && p1.id !== 'ctrl') tryPlaceCard(p1.cellIndex, 9, false);
+                    else if (p1.isLongPress && p1.activeValue !== null && p1.isEmpty && p1.id !== 'ctrl') tryPlaceCard(p1.cellIndex, p1.activeValue, false);
+                    setP1(null);
+                }
+            };
+
+            const getSumBox = () => {
+                if (!p1 || !p2) return null;
+                const r1 = Math.floor(p1.cellIndex / 9), c1 = p1.cellIndex % 9, r2 = Math.floor(p2.cellIndex / 9), c2 = p2.cellIndex % 9;
+                const minR = Math.min(r1, r2), maxR = Math.max(r1, r2), minC = Math.min(c1, c2), maxC = Math.max(c1, c2);
+                let sum = 0, cells = [], emptyCount = 0;
+                for (let r = minR; r <= maxR; r++) {
+                    for (let c = minC; c <= maxC; c++) {
+                        const idx = r * 9 + c; cells.push(idx);
+                        if (board[idx] !== null) sum += board[idx].value; else emptyCount++;
+                    }
+                }
+                const isSquare = (maxR - minR) === (maxC - minC);
+                let targetSquare = null, diff = null, canAchieve = false;
+                if (isSquare) {
+                    const root = Math.floor(Math.sqrt(sum));
+                    targetSquare = (root + 1) * (root + 1); diff = targetSquare - sum;
+                    if (diff >= 1 && diff <= 9 && playersState[currentTurn].hand[diff - 1] > 0 && emptyCount > 0) canAchieve = true;
+                }
+                return { cells, sum, isSquare, targetSquare, diff, canAchieve, centerRow: (minR + maxR) / 2, centerCol: (minC + maxC) / 2 };
+            };
+            const sumBox = getSumBox();
+
+            const toggleFrameSelection = (index) => {
+                if(playerConfigs[currentTurn].type !== 'HUMAN') return; 
+                const newFrames = [...pendingFrames];
+                newFrames[index].isSelected = !newFrames[index].isSelected;
+                setPendingFrames(newFrames);
+            };
+
+            const processFrames = async (overrideFrames = null) => {
+                const framesToProcess = overrideFrames || pendingFrames;
+                const selectedFrames = framesToProcess.filter(f => f.isSelected);
+                if (selectedFrames.length === 0) { skipFrames(); return; }
+
+                setGamePhase('animating');
+                let newPlayersState = [...playersState];
+
+                for (let i = 0; i < selectedFrames.length; i++) {
+                    const frame = selectedFrames[i];
+                    setActiveCells(frame.cells);
+                    let winnerNames = frame.winners.map(w => playerConfigs[w].name).join('與');
+                    frame.winners.forEach(w => { newPlayersState[w].score += frame.pointsPerWinner; });
+                    setPlayersState([...newPlayersState]);
+
+                    const xPercent = (frame.centerCol / 8) * 100, yPercent = (frame.centerRow / 8) * 100;
+                    setFloatingText({ text: `+${frame.pointsPerWinner}`, subText: `(${winnerNames})`, x: `calc(${xPercent}% - 30px)`, y: `calc(${yPercent}% - 20px)`, colorClass: frame.winners.length === 1 ? playerConfigs[frame.winners[0]].textClass : 'text-purple-600' });
+                    await sleep(1500); setActiveCells([]); setFloatingText(null); await sleep(200);
+                }
+                nextTurn(board);
+            };
+
+            const skipFrames = () => { setPendingFrames([]); nextTurn(board); };
+            const nextTurn = (currentBoard) => { if (currentBoard.every(cell => cell !== null)) setGamePhase('gameover'); else { setGamePhase('playing'); setCurrentTurn((currentTurn + 1) % 3); } };
+            const returnToLobby = () => { setLobbyPhase(true); };
+
+            const updateMBTI = (playerIndex, charIndex, newValue) => {
+                const newConfigs = [...playerConfigs];
+                const arr = newConfigs[playerIndex].type.split('');
+                arr[charIndex] = newValue;
+                newConfigs[playerIndex].type = arr.join('');
+                setPlayerConfigs(newConfigs);
+            };
+
+            const handlePointerEnter = (index) => {
+                setHoveredCell(index);
+                hoveredCellRef.current = index;
+                if (p1Ref.current && p1Ref.current.id === 'ctrl') {
+                    setP2({ id: 'mouse', cellIndex: index });
+                }
+            };
+
+            const handlePointerLeaveBoard = () => {
+                setHoveredCell(null);
+                hoveredCellRef.current = null;
+            };
+
+            const renderHandInventory = (playerId) => {
+                const isCurrent = playerId === currentTurn;
+                const hand = playersState[playerId].hand;
+                const config = playerConfigs[playerId];
+                const isAI = config.type !== 'HUMAN';
+                
+                return React.createElement('div', { className: `p-2 sm:p-3 rounded-xl border-2 transition-all ${isCurrent ? config.borderClass + ' shadow-md bg-white' : 'border-gray-200 bg-gray-50 opacity-60'}` },
+                    React.createElement('div', { className: "flex items-center justify-between mb-1.5" },
+                        React.createElement('h3', { className: `font-bold text-sm sm:text-base flex items-center gap-1 ${config.textClass}` },
+                            React.createElement('span', null, MBTI_INFO[config.type]?.icon || '👤'),
+                            config.name,
+                            isCurrent && React.createElement('span', { className: "ml-2 text-[10px] bg-yellow-400 text-yellow-900 px-2 py-0.5 rounded-full animate-pulse" }, isAI ? '思考中' : '操作中')
+                        ),
+                        React.createElement('span', { className: "text-base sm:text-xl font-black text-gray-800" }, playersState[playerId].score, " 分")
+                    ),
+                    React.createElement('div', { className: "flex flex-wrap gap-1" },
+                        hand.map((count, index) => {
+                            const isEmpty = count === 0;
+                            return React.createElement('div', { key: index, className: `flex flex-col items-center justify-center w-6 h-8 sm:w-8 sm:h-10 rounded border ${isEmpty ? 'bg-gray-100 border-gray-200 text-gray-300' : 'bg-white border-gray-300 text-gray-700'}` },
+                                React.createElement('span', { className: "text-xs sm:text-sm font-bold" }, index + 1),
+                                React.createElement('span', { className: "text-[8px] sm:text-[9px] -mt-1 leading-none" }, "x" + count)
+                            );
+                        })
+                    )
+                );
+            };
+
+            const renderRadialMenu = () => {
+                if (!p1 || !p1.isLongPress || p2 || playerConfigs[currentTurn].type !== 'HUMAN') return null;
+                if (p1.id === 'ctrl') return null; 
+
+                const R = 60, centerStyle = { left: p1.startX, top: p1.startY }, config = playerConfigs[currentTurn];
+                const items = [{ val: 1, angle: -90 }, { val: 2, angle: -45 }, { val: 3, angle: 0 }, { val: 4, angle: 45 }, { val: 5, angle: 90 }, { val: 6, angle: 135 }, { val: 7, angle: 180 }, { val: 8, angle: -135 }];
+
+                return React.createElement('div', { className: "fixed inset-0 pointer-events-none z-[200]" },
+                    React.createElement('div', { className: "absolute w-14 h-14 -ml-7 -mt-7 rounded-full flex flex-col items-center justify-center bg-white shadow-lg border-4 transition-transform scale-110", style: { ...centerStyle, borderColor: config.menuColor } },
+                        p1.activeValue ? React.createElement('span', { className: "text-xl font-black", style: { color: config.menuColor } }, p1.activeValue) : React.createElement('span', { className: "text-[10px] font-bold text-gray-400" }, "取消")
+                    ),
+                    items.map(item => {
+                        const rad = item.angle * (Math.PI / 180), x = p1.startX + R * Math.cos(rad), y = p1.startY + R * Math.sin(rad);
+                        const isActive = p1.activeValue === item.val, hasCard = playersState[currentTurn].hand[item.val - 1] > 0;
+                        return React.createElement('div', { key: item.val, className: `absolute w-10 h-10 -ml-5 -mt-5 rounded-full flex flex-col items-center justify-center shadow-md transition-all ${isActive ? 'scale-125 z-10' : 'scale-100 opacity-90'} ${!hasCard ? 'bg-gray-200 opacity-50 grayscale' : isActive ? 'text-white' : 'bg-white text-gray-700'}`, style: { left: x, top: y, backgroundColor: isActive && hasCard ? config.menuColor : undefined, border: isActive && hasCard ? 'none' : '2px solid #e5e7eb' } },
+                            React.createElement('span', { className: "text-base font-black" }, item.val),
+                            React.createElement('span', { className: `text-[8px] -mt-1 ${isActive && hasCard ? 'text-white/80' : 'text-gray-500'}` }, "x" + playersState[currentTurn].hand[item.val - 1])
+                        );
+                    })
+                );
+            };
+
+            if (lobbyPhase) {
+                return React.createElement('div', { className: "min-h-[100dvh] bg-gray-100 flex items-center justify-center p-4 font-sans select-none" },
+                    React.createElement('div', { className: "bg-white p-6 sm:p-8 rounded-3xl shadow-2xl max-w-xl w-full max-h-[90vh] overflow-y-auto custom-scrollbar" },
+                        React.createElement('div', { className: "text-center mb-6" },
+                            React.createElement('h1', { className: "text-4xl font-black text-gray-800 tracking-wider mb-2" }, "框制 ", React.createElement('span', { className: "text-xl text-gray-500 font-normal" }, "Framing")),
+                            React.createElement('p', { className: "text-gray-600 font-bold bg-yellow-100 py-1 rounded-full text-xs sm:text-sm inline-block px-4" }, "全 16 型 MBTI 認知引擎")
+                        ),
+                        React.createElement('div', { className: "space-y-4 mb-6" },
+                            playerConfigs.map((config, idx) => React.createElement('div', { key: idx, className: `p-4 rounded-2xl border-2 ${config.borderClass} ${config.lightBg}` },
+                                React.createElement('div', { className: "flex justify-between items-center mb-3" },
+                                    React.createElement('span', { className: `font-bold text-lg ${config.textClass}` }, config.name + " 控制器"),
+                                    config.type !== 'HUMAN' && React.createElement('span', { className: "text-xs font-bold text-gray-500 flex items-center gap-1" }, "核心: " + getCognitiveFunctions(config.type)[0] + " / " + getCognitiveFunctions(config.type)[1])
+                                ),
+                                React.createElement('div', { className: "flex flex-col gap-
